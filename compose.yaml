@@ -1,0 +1,50 @@
+services:
+  twbit:
+    build: .
+    image: twbit:local
+    init: true
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${TWBIT_LOG_FORMAT:-pretty}
+      TZ: ${TZ:-Asia/Yekaterinburg}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets:
+      - postgres_password
+    volumes:
+      - type: bind
+        source: ./config.json
+        target: /app/config.json
+        read_only: true
+    stop_grace_period: 20s
+
+  postgres:
+    image: postgres:18.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: twbit
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    secrets:
+      - postgres_admin_password
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./docker/postgres/001_app_role.sql:/docker-entrypoint-initdb.d/001_app_role.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d twbit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+secrets:
+  postgres_password:
+    file: ./.secrets/postgres_password
+  postgres_admin_password:
+    file: ./.secrets/postgres_admin_password
+
+volumes:
+  postgres_data:

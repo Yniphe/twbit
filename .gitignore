@@ -1,0 +1,52 @@
+# Private configuration and credentials; publish only the example.
+/config*.json*
+!/config.example.json
+/.secrets/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Dependencies, build output and caches.
+node_modules/
+dist/
+out/
+coverage/
+.cache/
+.eslintcache
+*.tsbuildinfo
+*.lcov
+
+# Downloaded speech models and archives.
+/models/
+*.tar.bz2
+*.tgz
+
+# Runtime files, recordings and database exports.
+/logs/
+/data/
+/postgres-data/
+/backups/
+*.log
+*.tmp
+*.bak
+*.dump
+*.backup
+*.sql.gz
+/report.*.json
+/*.wav
+/*.mp3
+/*.flac
+/*.mp4
+
+# Editors and operating systems.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo

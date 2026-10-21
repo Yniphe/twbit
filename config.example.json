@@ -1,0 +1,110 @@
+{
+  "channel": "licrige",
+  "accessToken": "YOUR_TWITCH_OAUTH_TOKEN",
+  "refreshToken": "",
+  "clientId": "",
+  "transport": "auto",
+  "greeting": {
+    "enabled": true,
+    "timeZone": "Asia/Yekaterinburg",
+    "messages": [
+      "всем здарова",
+      "всем привет",
+      "здарова чат"
+    ]
+  },
+  "speech": {
+    "enabled": true,
+    "threads": 2,
+    "partialResults": false,
+    "vad": {
+      "threshold": 0.15,
+      "minSilenceSeconds": 0.5,
+      "minSpeechSeconds": 0.15,
+      "maxSpeechSeconds": 8
+    }
+  },
+  "database": {
+    "enabled": true,
+    "hostname": "postgres",
+    "port": 5432,
+    "database": "twbit",
+    "username": "twbit",
+    "passwordFile": "/run/secrets/postgres_password",
+    "tls": false,
+    "maxConnections": 2,
+    "history": {
+      "enabled": true,
+      "retentionDays": 30
+    }
+  },
+  "ai": {
+    "enabled": false,
+    "provider": "openrouter",
+    "accessToken": "",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "model": "google/gemini-4-argon",
+    "prePrompt": "Ты свой в русскоязычном Twitch-чате, язвительный, наблюдательный, с сухим сарказмом и самоиронией. Общайся на равных с автором канала и зрителями, сам подхватывай смешные моменты эфира. Пиши коротко, разговорно, подкол по детали. На подкол ответь подколом, без оправданий и самоунижения. Ошибку в фактах признай, на вопрос ответь по делу. Без натужных шуток и их объяснений. Отказ определяй по контексту, не по мату, уважай его границы. Ответный стёб не запрет. Сочный мат и словотворчество естественны, без цензуры. Мат шутку не заменяет. «связь, грязь» — одобрение чужой шутки, изредка отвечай так на удачный юмор. Не выдумывай факты, цитаты, поступки и личный опыт ради панча. Сохраняй смысл чужих слов. Не обслуживай автора канала, не давай непрошеных советов и не отвечай от его имени. Обращайся на ты, ник уже в target, без слова стример. Из пунктуации только запятые, без эмодзи, сохраняя ники и ссылки. Не повторяй свои ответы. Без технической самопрезентации. На прямой вопрос об ИИ ответь честно, без выдуманной биографии.",
+    "strategy": "balanced",
+    "strategyPrompt": "",
+    "reasoningEffort": "medium",
+    "temperature": 0.6,
+    "maxTokens": 3072,
+    "timeoutSeconds": 12,
+    "batch": {
+      "size": 12,
+      "maxWaitSeconds": 12,
+      "minIntervalSeconds": 8
+    },
+    "context": {
+      "maxChatMessages": 40,
+      "maxSpeechSegments": 10,
+      "maxAgeSeconds": 90,
+      "maxCharacters": 9000,
+      "earlierSpeech": {
+        "maxAgeSeconds": 300,
+        "maxCharacters": 4000
+      }
+    },
+    "reply": {
+      "cooldownSeconds": 40,
+      "maxCharacters": 160,
+      "minConfidence": 0.7,
+      "maxAgeSeconds": 30,
+      "maxWords": 24
+    },
+    "delivery": "console_only",
+    "memory": {
+      "enabled": true,
+      "minConfidence": 0.85,
+      "maxItemsPerUser": 5,
+      "maxCharacters": 4000,
+      "retentionDays": 90,
+      "momentRetentionDays": 14
+    },
+    "dialogue": {
+      "enabled": true,
+      "debounceSeconds": 1,
+      "minIntervalSeconds": 3,
+      "windowSeconds": 120
+    },
+    "stream": {
+      "debounceSeconds": 2,
+      "minIntervalSeconds": 4,
+      "cooldownSeconds": 10,
+      "maxAgeSeconds": 15,
+      "reasoningEffort": "medium"
+    },
+    "review": {
+      "enabled": true,
+      "timeoutSeconds": 6,
+      "maxTokens": 1536
+    },
+    "providerRouting": {
+      "only": [
+        "google-ai-studio/flex"
+      ],
+      "allowFallbacks": false
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "twbit",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run index.ts",
+    "start:eventsub": "bun run index.ts --transport=eventsub",
+    "start:chat": "bun run index.ts --chat-only",
+    "start:speech": "bun run index.ts --speech-only",
+    "smoke:speech": "bun run scripts/smoke-speech.ts",
+    "test": "bun test",
+    "typecheck": "bun check",
+    "db:prepare": "bun run scripts/prepare-database.ts",
+    "db:migrate": "bun run scripts/database.ts migrate",
+    "db:check": "bun run scripts/database.ts check",
+    "db:stats": "bun run scripts/database.ts stats",
+    "db:history": "bun run scripts/reply-history.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "dependencies": {
+    "pino": "^10.4.0",
+    "pino-pretty": "^13.2.0",
+    "sherpa-onnx-node": "1.13.8"
+  }
+}
