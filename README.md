@@ -39,6 +39,9 @@ docker run --rm --mount "type=bind,source=${PWD},target=/workspace" -w /workspac
 docker compose up --build
 ```
 
+Перед запуском замените `example_channel` в `config.json` на нужный логин Twitch.
+Ники и отображаемые имена в примерах и тестах вымышленные.
+
 Откройте [localhost:3000](http://localhost:3000). Вход в саму панель пока не нужен,
 Compose публикует порт только на локальном компьютере. Аккаунт бота подключается
 кнопкой «Войти ботом»: один раз укажите Client ID своего Public-приложения Twitch
@@ -653,7 +656,7 @@ UUID и `ON CONFLICT` исключают двойной
 docker compose run --rm twbit --chat-only --transport=eventsub
 
 # Явно выбрать IRC или другой канал.
-docker compose run --rm twbit --chat-only --transport=irc --channel=licrige
+docker compose run --rm twbit --chat-only --transport=irc --channel=example_channel
 
 # Проверить токен и выбор транспорта, затем выйти без подключения к чату.
 docker compose run --rm twbit --check

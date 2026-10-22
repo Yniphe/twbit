@@ -118,11 +118,11 @@ test("forbidden words are rejected before review and delivery even at maximum co
 
 test("a sharp profane reply to an active regular reaches review and the fake sender without hijacking other dialogue", async () => {
   let now = Date.now(); spyOn(Date, "now").mockImplementation(() => now);
-  const login = "dimulya__stepanenko";
+  const login = "regular_viewer";
   const text = "с таким темпом тебе уже трудовую в этом чате заводить пора, заебал план перевыполнять";
   const review = mock(async () => ({ verdict: "accept" as const, reason: "Подкол по свежей реплике, без запрещённых слов" }));
   const app = setup({ batchSize: 2, reviewer: { review }, banter: { cooldownSeconds: 300,
-    participants: [{ channel: "channel", login, displayName: "亼仈爪丹匚" }] }, analyze: async (messages) => {
+    participants: [{ channel: "channel", login, displayName: "测试观众" }] }, analyze: async (messages) => {
     const data = JSON.parse(messages[1]!.content);
     if (!data.banterTarget) return replyFor(messages);
     const source = data.events.find((event: { author: string }) => event.author === login);
@@ -130,11 +130,11 @@ test("a sharp profane reply to an active regular reaches review and the fake sen
       replyToEventId: source.id, eventIds: [source.id] } };
   } });
   try {
-    app.assistant.addChat({ ...message("regular", "по одному слову сообщения набивать буду"), login, author: "亼仈爪丹匚" });
+    app.assistant.addChat({ ...message("regular", "по одному слову сообщения набивать буду"), login, author: "测试观众" });
     app.assistant.addChat(message("other", "быстро учится")); await app.assistant.settled();
     expect(app.send).toHaveBeenCalledWith(text, "regular");
     expect(review).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(app.analyze.mock.calls[0]![0][1]!.content).banterTarget).toEqual({ login, displayName: "亼仈爪丹匚" });
+    expect(JSON.parse(app.analyze.mock.calls[0]![0][1]!.content).banterTarget).toEqual({ login, displayName: "测试观众" });
     now += 5000;
     app.assistant.addChat(message("direct", "@bot а ты что думаешь")); await app.assistant.settled();
     const direct = JSON.parse(app.analyze.mock.calls[1]![0][1]!.content);
@@ -242,12 +242,12 @@ test("confirmed daily greeting is available as dialogue context and a reply targ
 test("the live greeting with a digit in the viewer nickname reaches the fake sender", async () => {
   const app = setup({ analyze: async (messages) => {
     const result = replyFor(messages);
-    return { ...result, decision: { ...result.decision, text: "привет, x1no_vibeee", facts: [] } };
+    return { ...result, decision: { ...result.decision, text: "привет, viewer_42", facts: [] } };
   } });
   try {
-    app.assistant.addChat({ ...message("one", "@bot привет"), login: "x1no_vibeee" });
+    app.assistant.addChat({ ...message("one", "@bot привет"), login: "viewer_42" });
     await app.assistant.settled();
-    expect(app.send).toHaveBeenCalledWith("привет, x1no_vibeee", "one");
+    expect(app.send).toHaveBeenCalledWith("привет, viewer_42", "one");
   } finally { app.assistant.stop(); }
 });
 

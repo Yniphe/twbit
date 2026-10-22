@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { formatReplyMessage, stripRecipientAddress } from "../src/chat-delivery";
 
 test("native replies remove repeated opening addresses to the exact recipient", () => {
-  for (const text of ["mejown, а ты тут за отдел кадров", "@MeJoWn mejown, а ты тут за отдел кадров",
-    "  mejown : @mejown, а ты тут за отдел кадров  ", "а ты тут за отдел кадров"]) {
-    expect(formatReplyMessage(text, "mejown", "parent-id")).toBe("а ты тут за отдел кадров");
+  for (const text of ["sample_viewer, а ты тут за отдел кадров", "@SaMpLe_ViEwEr sample_viewer, а ты тут за отдел кадров",
+    "  sample_viewer : @sample_viewer, а ты тут за отдел кадров  ", "а ты тут за отдел кадров"]) {
+    expect(formatReplyMessage(text, "sample_viewer", "parent-id")).toBe("а ты тут за отдел кадров");
   }
 });
 

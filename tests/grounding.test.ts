@@ -82,26 +82,26 @@ test("a conversational quote cannot unlock invented personal actions or numbers"
 });
 
 test("observed Twitch logins with digits are names, including the live greeting", () => {
-  const context = batch(event("@yniphysha привет", { author: "x1no_vibeee", speaker: "viewer" }));
-  const target = { kind: "viewer" as const, login: "x1no_vibeee" };
-  for (const text of ["привет, x1no_vibeee", "привет, @x1no_vibeee", "X1NO_VIBEEE, здарова"]) {
+  const context = batch(event("@example_bot привет", { author: "viewer_42", speaker: "viewer" }));
+  const target = { kind: "viewer" as const, login: "viewer_42" };
+  for (const text of ["привет, viewer_42", "привет, @viewer_42", "VIEWER_42, здарова"]) {
     expect(rejectUngroundedReply({ ...reply(text, []), target }, context)).toBeUndefined();
   }
-  for (const text of ["привет, x1no_vibeee2", "привет, other1", "привет, prefixx1no_vibeee"]) {
+  for (const text of ["привет, viewer_422", "привет, other1", "привет, prefixviewer_42"]) {
     expect(rejectUngroundedReply({ ...reply(text, []), target }, context)).toBeDefined();
   }
 });
 
 test("ignoring a known nickname cannot hide real numbers, units or fabricated actions", () => {
-  const context = batch(event("У меня 32 гига", { author: "x1no_vibeee", speaker: "viewer" }));
-  const target = { kind: "viewer" as const, login: "x1no_vibeee" };
-  for (const text of ["x1no_vibeee, у тебя 64 гига", "@x1no_vibeee, у тебя 64гб", "@x1no_vibeee, у тебя 64gb"]) {
+  const context = batch(event("У меня 32 гига", { author: "viewer_42", speaker: "viewer" }));
+  const target = { kind: "viewer" as const, login: "viewer_42" };
+  for (const text of ["viewer_42, у тебя 64 гига", "@viewer_42, у тебя 64гб", "@viewer_42, у тебя 64gb"]) {
     expect(rejectUngroundedReply({ ...reply(text, fact("У меня 32 гига")), target }, context)).toContain("Число");
   }
-  expect(rejectUngroundedReply({ ...reply("@x1no_vibeee, у тебя 32 гига", fact("У меня 32 гига")), target }, context)).toBeUndefined();
-  expect(rejectUngroundedReply({ ...reply("x1no_vibeee, зачем взял блинк", []), target }, context)).toBeDefined();
-  const onlyName = batch(event("Я x1no_vibeee", { author: "x1no_vibeee", speaker: "viewer" }));
-  expect(rejectUngroundedReply({ ...reply("у тебя 1 гигабайт", fact("Я x1no_vibeee")), target }, onlyName)).toContain("Число");
+  expect(rejectUngroundedReply({ ...reply("@viewer_42, у тебя 32 гига", fact("У меня 32 гига")), target }, context)).toBeUndefined();
+  expect(rejectUngroundedReply({ ...reply("viewer_42, зачем взял блинк", []), target }, context)).toBeDefined();
+  const onlyName = batch(event("Я viewer_42", { author: "viewer_42", speaker: "viewer" }));
+  expect(rejectUngroundedReply({ ...reply("у тебя 1 гигабайт", fact("Я viewer_42")), target }, onlyName)).toContain("Число");
 });
 
 test("a numeric-only bare token is still a count even if it matches an observed username", () => {

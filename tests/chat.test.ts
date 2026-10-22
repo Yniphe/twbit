@@ -53,22 +53,22 @@ function welcome(id: string) {
 test("config uses the edited accessToken field while preserving optional OAuth fields", () => {
   const config = parseConfig({
     accessToken: "oauth:new-access-token", token: "stale-legacy-token",
-    refreshToken: "refresh-token", clientId: "client-id", channel: "#Licrige",
+    refreshToken: "refresh-token", clientId: "client-id", channel: "#Example_Channel",
   });
   expect(config.accessToken).toBe("new-access-token");
   expect(config.refreshToken).toBe("refresh-token");
   expect(config.clientId).toBe("client-id");
-  expect(config.channel).toBe("licrige");
+  expect(config.channel).toBe("example_channel");
   expect(() => parseConfig({ token: "stale-legacy-token" })).toThrow("accessToken");
 });
 
 test("IRC parser buffers split frames, unescapes tags and preserves colons in message text", () => {
   const parser = new IrcParser();
-  expect(parser.feed("@id=one;display-name=Some\\sName\\:X :user!user@host PRIVMSG #licrige :hello :")).toEqual([]);
+  expect(parser.feed("@id=one;display-name=Some\\sName\\:X :user!user@host PRIVMSG #example_channel :hello :")).toEqual([]);
   const messages = parser.feed(" world\r\nPING :tmi.twitch.tv\r\n");
   expect(messages[0]).toMatchObject({
     tags: { id: "one", "display-name": "Some Name;X" },
-    command: "PRIVMSG", params: ["#licrige"], text: "hello : world",
+    command: "PRIVMSG", params: ["#example_channel"], text: "hello : world",
   });
   expect(messages[1]).toMatchObject({ command: "PING", text: "tmi.twitch.tv" });
 });
@@ -77,7 +77,7 @@ test("IRC authenticates, responds to keepalive and emits only the requested chan
   const fake = fakeSockets();
   const received: ChatMessage[] = [];
   const onReady = mock(() => {});
-  const client = new IrcChatClient("licrige", "reader", "test-token", {
+  const client = new IrcChatClient("example_channel", "reader", "test-token", {
     onMessage: (message) => received.push(message), onStatus() {}, onReady,
   }, fake.create);
   const running = client.run();
@@ -86,15 +86,15 @@ test("IRC authenticates, responds to keepalive and emits only the requested chan
     socket.open();
     expect(socket.sent).toContain("PASS oauth:test-token\r\n");
     await socket.receive(":tmi.twitch.tv 001 reader :Welcome\r\nPING :tmi.twitch.tv\r\n");
-    expect(socket.sent).toContain("JOIN #licrige\r\n");
+    expect(socket.sent).toContain("JOIN #example_channel\r\n");
     expect(socket.sent).toContain("PONG :tmi.twitch.tv\r\n");
     expect(client.ready).toBe(false);
     await socket.receive(":tmi.twitch.tv ROOMSTATE #another\r\n");
     expect(onReady).not.toHaveBeenCalled();
-    await socket.receive(":tmi.twitch.tv ROOMSTATE #licrige\r\n:tmi.twitch.tv ROOMSTATE #licrige\r\n");
+    await socket.receive(":tmi.twitch.tv ROOMSTATE #example_channel\r\n:tmi.twitch.tv ROOMSTATE #example_channel\r\n");
     expect(client.ready).toBe(true);
     expect(onReady).toHaveBeenCalledTimes(1);
-    await socket.receive("@id=one;display-name=Viewer;user-id=123;reply-parent-msg-id=parent;reply-parent-user-id=999;reply-parent-user-login=bot;reply-parent-msg-body=как\\sдела :viewer!user@host PRIVMSG #licrige :привет\r\n"
+    await socket.receive("@id=one;display-name=Viewer;user-id=123;reply-parent-msg-id=parent;reply-parent-user-id=999;reply-parent-user-login=bot;reply-parent-msg-body=как\\sдела :viewer!user@host PRIVMSG #example_channel :привет\r\n"
       + ":other!user@host PRIVMSG #another :не этот канал\r\n");
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ id: "one", author: "Viewer", text: "привет", userId: "123",
@@ -109,7 +109,7 @@ test("IRC authenticates, responds to keepalive and emits only the requested chan
 
 test("stopping during a reconnect delay finishes without opening another socket", async () => {
   const fake = fakeSockets();
-  const client = new IrcChatClient("licrige", "reader", "test-token", { onMessage() {}, onStatus() {} }, fake.create);
+  const client = new IrcChatClient("example_channel", "reader", "test-token", { onMessage() {}, onStatus() {} }, fake.create);
   const running = client.run();
   fake.sockets[0]!.close();
   await Promise.resolve();
@@ -120,26 +120,26 @@ test("stopping during a reconnect delay finishes without opening another socket"
 
 test("IRC sending validates commands and waits for the server message ID, without a real socket", async () => {
   const fake = fakeSockets();
-  const client = new IrcChatClient("licrige", "reader", "test-token", { onMessage() {}, onStatus() {} }, fake.create);
+  const client = new IrcChatClient("example_channel", "reader", "test-token", { onMessage() {}, onStatus() {} }, fake.create);
   const running = client.run();
   try {
     const socket = fake.sockets[0]!;
     await expect(client.send("hello")).rejects.toThrow("недоступна");
     socket.open();
-    await socket.receive(":tmi.twitch.tv 001 reader :Welcome\r\n:tmi.twitch.tv ROOMSTATE #licrige\r\n");
+    await socket.receive(":tmi.twitch.tv 001 reader :Welcome\r\n:tmi.twitch.tv ROOMSTATE #example_channel\r\n");
     for (const text of ["", "hello\r\nPRIVMSG #other :oops", "/ban viewer", "x".repeat(501)]) {
       await expect(client.send(text)).rejects.toThrow("Некорректный");
     }
     await expect(client.send("hello", "bad;tag=one")).rejects.toThrow("ID");
     const sent = client.send("Тестовый ответ", "parent-id");
-    expect(socket.sent.at(-1)).toBe("@reply-parent-msg-id=parent-id PRIVMSG #licrige :Тестовый ответ\r\n");
-    await socket.receive("@id=confirmed-id :tmi.twitch.tv USERSTATE #licrige\r\n");
+    expect(socket.sent.at(-1)).toBe("@reply-parent-msg-id=parent-id PRIVMSG #example_channel :Тестовый ответ\r\n");
+    await socket.receive("@id=confirmed-id :tmi.twitch.tv USERSTATE #example_channel\r\n");
     expect(await sent).toEqual({ messageId: "confirmed-id" });
     const rejected = client.send("Другой ответ").catch((error: Error) => error);
-    await socket.receive("@msg-id=msg_rejected :tmi.twitch.tv NOTICE #licrige :Held by moderators\r\n");
+    await socket.receive("@msg-id=msg_rejected :tmi.twitch.tv NOTICE #example_channel :Held by moderators\r\n");
     expect(await rejected).toMatchObject({ code: "msg_rejected", message: expect.stringContaining("проверки модераторами") });
     const followersOnly = client.send("Ответ в закрытый для нефолловеров чат").catch((error: Error) => error);
-    await socket.receive("@msg-id=msg_followersonly_zero :tmi.twitch.tv NOTICE #licrige :This room is in followers-only mode\r\n");
+    await socket.receive("@msg-id=msg_followersonly_zero :tmi.twitch.tv NOTICE #example_channel :This room is in followers-only mode\r\n");
     expect(await followersOnly).toMatchObject({ code: "msg_followersonly_zero", message: expect.stringContaining("бот не отслеживает канал") });
     const interrupted = client.send("Ещё один ответ").catch((error: Error) => error);
     client.stop();

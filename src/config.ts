@@ -47,7 +47,7 @@ export function parseConfig(data: unknown, args: string[] = [], options: ConfigO
     return value.trim();
   };
 
-  let channel = readString("channel") ?? "licrige";
+  let channel = readString("channel") ?? "example_channel";
   let transport = readString("transport") ?? "auto";
   let once = false;
   let check = false;

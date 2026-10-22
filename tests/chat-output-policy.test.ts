@@ -21,7 +21,7 @@ test("all requested words and their common word forms are blocked in bot output"
 test("normal words, usernames and strong profanity are not caught by substrings", () => {
   for (const text of ["работа", "работник", "разработчик", "заработал", "корабль", "краб", "араб", "жидкость", "жидкий",
     "хачапури", "симпатичный", "симпатия", "simple", "@simple_viewer", "@раб_ник",
-    "пиздец", "бля", "нахуй", "заебал", "долбаёб", "еблан", "чмоня", "пиздаболка", "хугорлонка", "亼仈爪丹匚", "у этого подъеба инструкция длиннее панча"]) {
+    "пиздец", "бля", "нахуй", "заебал", "долбаёб", "еблан", "чмоня", "пиздаболка", "хугорлонка", "测试观众", "у этого подъеба инструкция длиннее панча"]) {
     expect(policy.find(text)).toBeUndefined();
     expect(() => validateOutgoingMessage(text)).not.toThrow();
   }

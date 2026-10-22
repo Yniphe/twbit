@@ -403,7 +403,7 @@ test("room API blocks unauthorized launches, guards account changes and exposes 
       }),
     );
   try {
-    expect((await request("/api/rooms/licrige/start")).status).toBe(401);
+    expect((await request("/api/rooms/example_channel/start")).status).toBe(401);
     expect(
       (
         await request(
@@ -415,7 +415,7 @@ test("room API blocks unauthorized launches, guards account changes and exposes 
     ).toBe(403);
     expect((await request("/api/auth/device", { clientId })).status).toBe(200);
     await until(() => app.auth.snapshot().ready);
-    expect((await request("/api/rooms/licrige/start")).status).toBe(200);
+    expect((await request("/api/rooms/example_channel/start")).status).toBe(200);
     expect((await request("/api/auth/logout")).status).toBe(409);
     expect((await request("/api/auth/device", { clientId })).status).toBe(409);
     const response = await server.handle(

@@ -83,13 +83,13 @@ test("the real application stays silent in offline IRC chat, never requests AI o
     const socket = sockets[0]!;
     socket.onopen?.();
     await socket.onmessage?.({
-      data: ":tmi.twitch.tv 001 bot :Welcome\r\n:tmi.twitch.tv ROOMSTATE #licrige\r\n",
+      data: ":tmi.twitch.tv 001 bot :Welcome\r\n:tmi.twitch.tv ROOMSTATE #example_channel\r\n",
     });
     await socket.onmessage?.({
       data:
         "@id=offline-one;user-id=123;tmi-sent-ts=" +
         Date.now() +
-        " :viewer!viewer@viewer.tmi.twitch.tv PRIVMSG #licrige :@bot привет\r\n",
+        " :viewer!viewer@viewer.tmi.twitch.tv PRIVMSG #example_channel :@bot привет\r\n",
     });
     await Bun.sleep(5);
     expect(events).toContainEqual({

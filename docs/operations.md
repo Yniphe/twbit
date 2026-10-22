@@ -115,7 +115,7 @@ BEGIN READ ONLY;
 SET LOCAL statement_timeout = '5s';
 SELECT login, kind, content, observed_at, evidence
 FROM twbit.user_memories
-WHERE channel = 'licrige' AND expires_at > now()
+WHERE channel = 'example_channel' AND expires_at > now()
 ORDER BY observed_at DESC
 LIMIT 30;
 ROLLBACK;

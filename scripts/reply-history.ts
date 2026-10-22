@@ -24,7 +24,7 @@ if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error("limit
 if (userId && !/^[1-9][0-9]{0,24}$/.test(userId)) throw new Error("user-id: числовой Twitch ID");
 if (id && !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw new Error("id: UUID анализа");
 const config = await Bun.file(new URL("../config.json", import.meta.url)).json();
-const channel = typeof config.channel === "string" ? config.channel.trim().replace(/^#/, "").toLowerCase() : "licrige";
+const channel = typeof config.channel === "string" ? config.channel.trim().replace(/^#/, "").toLowerCase() : "example_channel";
 if (!/^[a-z0-9_]{1,25}$/.test(channel)) throw new Error("Некорректный канал в config.json");
 const database = new PostgresDatabase(parseDatabaseConfig(config.database));
 try {

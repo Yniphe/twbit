@@ -85,7 +85,7 @@ test("recognition flushes unfinished speech when the audio input ends", () => {
 });
 
 test("speech-only mode needs no chat token and CLI modes override speech settings", () => {
-  const config = parseConfig({ channel: "rina_cia", speech: { enabled: false, threads: 3 } },
+  const config = parseConfig({ channel: "example_channel", speech: { enabled: false, threads: 3 } },
     ["--speech-only", "--duration=20"]);
   expect(config.speechOnly).toBe(true);
   expect(config.speech.enabled).toBe(true);
@@ -106,7 +106,7 @@ test("anonymous playback uses no account Authorization header", async () => {
       : new Response(manifest);
   };
   spyOn(globalThis, "fetch").mockImplementation(Object.assign(handleFetch, { preconnect: fetch.preconnect }));
-  const playlist = await new TwitchPlayback().resolve("rina_cia", new AbortController().signal);
+  const playlist = await new TwitchPlayback().resolve("example_channel", new AbortController().signal);
   expect(playlist.audioOnly).toBe(true);
   expect(headers.every((header) => !header.has("Authorization"))).toBe(true);
 });
