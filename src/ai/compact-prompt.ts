@@ -1,4 +1,6 @@
 import type { AnalysisResult, ChatPrompt, ConversationEvent, EarlierSpeech, ReplyDecision, ReplyDraft } from "./types";
+import type { BanterTarget } from "./reply-banter";
+import type { RelationshipContext } from "../people/relationships";
 
 type PromptEvent = Omit<ConversationEvent, "sequence" | "receivedAt">;
 interface PromptContext {
@@ -8,6 +10,8 @@ interface PromptContext {
   earlierSpeech?: EarlierSpeech[];
   newEventIds?: string[]; priorityEventIds?: string[];
   previousReplies?: ReplyDraft[]; userMemory?: unknown;
+  blockedWords?: string[]; banterTarget?: BanterTarget;
+  relationships?: RelationshipContext[];
   decision?: ReplyDecision; replyExample?: ReplyDecision;
 }
 export interface PromptSnapshot {
@@ -43,6 +47,8 @@ export class CompactPrompt {
     const context: Record<string, unknown> = kind === "analysis" ? {
       channel: data.channel, generatedAt: data.generatedAt, delivery: data.delivery,
       bot: data.bot ? { login: data.bot.login, userId: data.bot.userId } : undefined,
+      blockedWords: data.blockedWords, banterTarget: data.banterTarget,
+      relationships: data.relationships,
       newEventIds: data.newEventIds!.map((id) => this.eventId(id)),
       priorityEventIds: (data.priorityEventIds ?? []).map((id: string) => this.eventId(id)),
       events: data.events.map((event: PromptEvent) => this.event(event)),

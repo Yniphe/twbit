@@ -3,6 +3,9 @@ services:
     build: .
     image: twbit:local
     init: true
+    command: ["--dashboard"]
+    ports:
+      - "127.0.0.1:3000:3000"
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${TWBIT_LOG_FORMAT:-pretty}
@@ -13,6 +16,7 @@ services:
     secrets:
       - postgres_password
     volumes:
+      - dashboard_data:/data
       - type: bind
         source: ./config.json
         target: /app/config.json
@@ -48,3 +52,4 @@ secrets:
 
 volumes:
   postgres_data:
+  dashboard_data:

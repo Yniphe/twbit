@@ -6,6 +6,9 @@ import { EventSubChatClient } from "./clients/eventsub-chat-client";
 import { IrcChatClient } from "./clients/irc-chat-client";
 import { MessageDeduplicator } from "./clients/message-deduplicator";
 import type { ChatMessage, ClientCallbacks, WebSocketChatClient } from "./clients/websocket-chat-client";
+import type { TwitchTokenSource } from "./auth/types";
+import { ChatDeliveryError } from "./chat-send-error";
+import { ChatOutputPolicy } from "./chat-output-policy";
 
 export class ChatApplication implements ChatSender {
   private readonly shutdown = new AbortController();
@@ -15,12 +18,16 @@ export class ChatApplication implements ChatSender {
   private account?: TwitchUser;
   private channelId?: string;
   private lastSendAt = 0;
+  private readonly outputPolicy: ChatOutputPolicy;
 
   constructor(private readonly config: AppConfig, private readonly logger: Logger,
     private readonly onMessage: (message: ChatMessage) => void = () => {},
     private readonly onAccount: (user: TwitchUser) => void = () => {},
-    private readonly onReady: (user: TwitchUser) => void = () => {}) {
-    this.api = new TwitchApi(config.accessToken, this.shutdown.signal, config.clientId);
+    private readonly onReady: (user: TwitchUser) => void = () => {},
+    private readonly onConnection: (connected: boolean) => void = () => {}, tokens?: TwitchTokenSource,
+    private readonly allowSend: () => boolean = () => true) {
+    this.api = new TwitchApi(config.accessToken, this.shutdown.signal, config.clientId, tokens);
+    this.outputPolicy = new ChatOutputPolicy(config.ai.blockedWords);
   }
 
   get stopped(): boolean {
@@ -28,10 +35,12 @@ export class ChatApplication implements ChatSender {
   }
 
   get canSend(): boolean {
-    return this.config.ai.enabled && this.config.ai.delivery === "chat" && !this.config.check && !this.stopped
+    return this.allowSend() && this.config.ai.enabled && this.config.ai.delivery === "chat" && !this.config.check && !this.stopped
       && Boolean(this.client?.ready && this.account && (this.account.scopes.includes("user:write:chat")
         || (this.client instanceof IrcChatClient && this.account.scopes.includes("chat:edit"))));
   }
+
+  getLiveStream() { return this.api.getLiveStream(this.config.channel); }
 
   async run(): Promise<void> {
     const user = await this.api.authenticate();
@@ -63,6 +72,7 @@ export class ChatApplication implements ChatSender {
       },
       onStatus: (text, level = "info") => this.logger[level](text),
       onReady: () => this.onReady(user),
+      onConnection: this.onConnection,
     };
     if (transport === "eventsub") {
       const channelId = await this.api.getChannelId(this.config.channel);
@@ -75,20 +85,23 @@ export class ChatApplication implements ChatSender {
     await this.client.run();
   }
 
-  async send(text: string, replyToMessageId?: string): Promise<{ messageId: string }> {
-    if (!this.canSend || !this.account || !this.client) {
-      throw new Error("Отправка Twitch выключена или чат ещё не готов");
+  async send(text: string, replyToMessageId?: string, allowed: () => boolean = () => true): Promise<{ messageId: string }> {
+    this.outputPolicy.assert(text);
+    const canSend = () => this.canSend && allowed();
+    if (!canSend() || !this.account || !this.client) {
+      throw new ChatDeliveryError("SEND_NOT_READY", "Отправка Twitch выключена, чат ещё не подключён или у бота нет права отправки");
     }
-    if (Date.now() - this.lastSendAt < 2000) throw new Error("Twitch: выдерживается интервал между отправками");
+    if (Date.now() - this.lastSendAt < 2000) throw new ChatDeliveryError("SEND_COOLDOWN", "Сервис выдерживает интервал 2 секунды между отправками");
     this.lastSendAt = Date.now();
     if (this.account.scopes.includes("user:write:chat")) {
       this.channelId ??= await this.api.getChannelId(this.config.channel);
-      return this.api.sendMessage(this.channelId, this.account.userId, text, replyToMessageId);
+      if (!canSend()) throw new ChatDeliveryError("STREAM_NOT_LIVE", "Эфир не подтверждён или чат отключён, ответ не отправлен");
+      return this.api.sendMessage(this.channelId, this.account.userId, text, replyToMessageId, canSend);
     }
     if (this.client instanceof IrcChatClient && this.account.scopes.includes("chat:edit")) {
       return this.client.send(text, replyToMessageId);
     }
-    throw new Error("У токена нет права отправки: user:write:chat (API) или chat:edit (IRC)");
+    throw new ChatDeliveryError("SEND_PERMISSION_REQUIRED", "У токена нет права отправки: user:write:chat для API или chat:edit для IRC");
   }
 
   stop(): void {

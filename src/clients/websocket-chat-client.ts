@@ -15,6 +15,7 @@ export interface ClientCallbacks {
   onMessage(message: ChatMessage): void;
   onStatus(text: string, level?: "info" | "warn"): void;
   onReady?(): void;
+  onConnection?(connected: boolean): void;
 }
 
 export interface SocketContext {
@@ -107,6 +108,7 @@ export abstract class WebSocketChatClient {
           if (!this.shutdown.signal.aborted) {
             this.callbacks.onStatus("Подключено. Ожидаем сообщения…");
             this.callbacks.onReady?.();
+            this.callbacks.onConnection?.(true);
           }
         },
         emit: (message) => {
@@ -138,7 +140,10 @@ export abstract class WebSocketChatClient {
       socket.onerror = () => this.callbacks.onStatus("Ошибка WebSocket. Ожидаем переподключение…", "warn");
       socket.onclose = () => {
         clearTimeout(timer);
-        if (this.readySocket === socket) this.readySocket = undefined;
+        if (this.readySocket === socket) {
+          this.readySocket = undefined;
+          this.callbacks.onConnection?.(false);
+        }
         session.close?.();
         this.sockets.delete(socket);
         target?.previous.close();

@@ -1,3 +1,5 @@
+import { defaultChatOutputPolicy } from "./chat-output-policy";
+
 export interface ChatSender {
   send(text: string, replyToMessageId?: string): Promise<{ messageId: string }>;
 }
@@ -32,4 +34,5 @@ export function validateOutgoingMessage(text: string, replyToMessageId?: string)
   if (replyToMessageId !== undefined && !/^[a-zA-Z0-9-]{1,200}$/.test(replyToMessageId)) {
     throw new Error("Некорректный ID сообщения для ответа Twitch");
   }
+  defaultChatOutputPolicy.assert(text);
 }

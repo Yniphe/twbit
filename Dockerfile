@@ -41,7 +41,9 @@ COPY src ./src
 COPY tests ./tests
 COPY scripts ./scripts
 COPY migrations ./migrations
-RUN --network=none bun run typecheck && bun test
+COPY web ./web
+RUN --network=none bun run typecheck && bun test && bun run build:web
+RUN mkdir -p /data && chown bun:bun /data
 
 FROM tested-app AS benchmark
 COPY --from=tone-reference /models/t-one /models/t-one
@@ -50,4 +52,5 @@ ENTRYPOINT ["bun", "run", "scripts/benchmark-speech.ts"]
 
 FROM tested-app AS app
 USER bun
+EXPOSE 3000
 ENTRYPOINT ["bun", "run", "index.ts"]

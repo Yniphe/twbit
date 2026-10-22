@@ -1,5 +1,7 @@
 import { DEFAULT_PRE_PROMPT } from "./default-pre-prompt";
 import { parseMemoryConfig, type MemoryConfig } from "../memory/memory-config";
+import { parseBlockedWords } from "../chat-output-policy";
+import { parseBanterConfig, type BanterConfig } from "./reply-banter";
 
 export type ReplyStrategy = "balanced" | "streamer-first" | "chat-first";
 export type AiProvider = "zai" | "openrouter";
@@ -17,6 +19,8 @@ export interface AiConfig {
   prePrompt: string;
   strategy: ReplyStrategy;
   strategyPrompt: string;
+  blockedWords: string[];
+  banter: BanterConfig;
   reasoningEffort: ReasoningEffort;
   temperature: number;
   maxTokens: number;
@@ -122,6 +126,8 @@ export function parseAiConfig(value: unknown): AiConfig {
   return {
     enabled, delivery, accessToken, baseUrl, provider, providerRouting, strategy, reasoningEffort, model,
     prePrompt: text("prePrompt", DEFAULT_PRE_PROMPT),
+    blockedWords: parseBlockedWords(raw.blockedWords),
+    banter: parseBanterConfig(raw.banter),
     memory: parseMemoryConfig(raw.memory),
     dialogue: { enabled: dialogueEnabled,
       debounceSeconds: number(dialogue, "debounceSeconds", 1, 0, 30, "ai.dialogue"),

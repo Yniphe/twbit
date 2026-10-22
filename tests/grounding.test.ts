@@ -136,3 +136,41 @@ test("action-like substrings and intentions are not mistaken for completed perso
   expect(rejectUngroundedReply(reply("сумерки какие-то", []), batch(event("Тут темно")))).toBeUndefined();
   expect(rejectUngroundedReply(reply("ты собрал пылесос", []), batch(event("Пылесос перестал работать", { source: "stream_audio" })))).toBeDefined();
 });
+
+test("contextual quotes may come from another viewer without becoming the recipient's personal facts", () => {
+  const context = batch(event("да, морду ему прикрепил", { author: "other", speaker: "viewer" }));
+  expect(rejectUngroundedReply(reply("на этот фоторобот можно подавать в суд за клевету",
+    fact("морду ему прикрепил")), context)).toBeUndefined();
+  expect(rejectUngroundedReply(reply("на этот фоторобот можно подавать в суд за клевету",
+    fact("я ему морду прикрепил")), context)).toContain("отсутствует");
+});
+
+test("a number in the shared topic needs an exact chat quote, not a self-report", () => {
+  const quote = "А ну там 86к фоловеров, быстро видимо откинули";
+  const context = batch(event(quote, { author: "other", speaker: "viewer" }));
+  const text = "на 86к фоловеров у них свой аквариум, а тут живая база зашла и весь вайб поломала";
+  expect(rejectUngroundedReply(reply(text, fact(quote)), context)).toBeUndefined();
+  expect(rejectUngroundedReply(reply(text, []), context)).toBeDefined();
+  expect(rejectUngroundedReply(reply(text.replace("86", "87"), fact(quote)), context)).toContain("Число");
+  expect(rejectUngroundedReply(reply(text, fact(quote)),
+    batch(event(quote, { source: "stream_audio" })))).toContain("ASR");
+});
+
+test("shared evidence cannot be reassigned as the recipient's action or possession", () => {
+  const quote = "У меня 32 гига";
+  const context = batch(event(quote, { author: "other", speaker: "viewer" }));
+  for (const text of ["У тебя 32 гига, куда еще", "у owner 32 гига, куда еще", "у @owner 32 гига, куда еще"]) {
+    expect(rejectUngroundedReply(reply(text, fact(quote)), context)).toContain("другой");
+  }
+  expect(rejectUngroundedReply(reply("Ты купил блинк", fact("Я купил блинк")),
+    batch(event("Я купил блинк", { author: "other", speaker: "viewer" })))).toContain("другой");
+});
+
+test("valid personal evidence can coexist with a contextual quote from someone else", () => {
+  const context = batch(event("Я взял блинк"), event("орчид тоже вариант", { id: "chat:two", author: "other", speaker: "viewer" }));
+  const decision = reply("Зачем взял блинк", [
+    { eventId: "chat:two", quote: "орчид тоже вариант" }, ...fact("Я взял блинк"),
+  ]);
+  decision.eventIds.push("chat:two");
+  expect(rejectUngroundedReply(decision, context)).toBeUndefined();
+});

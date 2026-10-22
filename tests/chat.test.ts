@@ -137,10 +137,13 @@ test("IRC sending validates commands and waits for the server message ID, withou
     expect(await sent).toEqual({ messageId: "confirmed-id" });
     const rejected = client.send("Другой ответ").catch((error: Error) => error);
     await socket.receive("@msg-id=msg_rejected :tmi.twitch.tv NOTICE #licrige :Held by moderators\r\n");
-    expect(await rejected).toMatchObject({ message: "Twitch IRC: сообщение отклонено (msg_rejected)" });
+    expect(await rejected).toMatchObject({ code: "msg_rejected", message: expect.stringContaining("проверки модераторами") });
+    const followersOnly = client.send("Ответ в закрытый для нефолловеров чат").catch((error: Error) => error);
+    await socket.receive("@msg-id=msg_followersonly_zero :tmi.twitch.tv NOTICE #licrige :This room is in followers-only mode\r\n");
+    expect(await followersOnly).toMatchObject({ code: "msg_followersonly_zero", message: expect.stringContaining("бот не отслеживает канал") });
     const interrupted = client.send("Ещё один ответ").catch((error: Error) => error);
     client.stop();
-    expect(await interrupted).toMatchObject({ message: "Twitch IRC: соединение закрыто до подтверждения отправки" });
+    expect(await interrupted).toMatchObject({ code: "SEND_CONNECTION_CLOSED", message: expect.stringContaining("до подтверждения отправки") });
   } finally { client.stop(); await running; }
 });
 
@@ -160,6 +163,22 @@ test("Send Chat Message API checks is_sent, preserves reply parent and never ret
   dropped = true;
   await expect(api.sendMessage("123", "999", "Тест 2", "parent-id")).rejects.toThrow("automod_held");
   expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+test("send API exposes a safe HTTP refusal and code without leaking or retrying the response body", async () => {
+  const handleFetch = async (input: Parameters<typeof fetch>[0]) => String(input).includes("oauth2/validate")
+    ? Response.json({ user_id: "999", login: "bot", client_id: "client", scopes: ["user:write:chat"] })
+    : Response.json({ error: "Forbidden", message: "private-server-detail token=secret-value" }, { status: 403 });
+  const calls = spyOn(globalThis, "fetch").mockImplementation(Object.assign(handleFetch, { preconnect: fetch.preconnect }));
+  const api = new TwitchApi("fake-token", new AbortController().signal);
+  await api.authenticate();
+  const failure = await api.sendMessage("123", "999", "Тест").catch((error: Error) => error);
+  expect(failure).toBeInstanceOf(Error);
+  if (!(failure instanceof Error)) throw new Error("Expected a refusal");
+  expect(failure.message).toContain("права аккаунта бота");
+  expect(failure.message).not.toContain("private-server-detail");
+  expect(failure).toMatchObject({ code: "TWITCH_HTTP_403" });
+  expect(calls).toHaveBeenCalledTimes(2);
 });
 
 test("EventSub handoff keeps the old socket until welcome and reuses the subscription", async () => {
@@ -263,4 +282,43 @@ test("Twitch API uses the access token and validated client ID for EventSub", as
     condition: { broadcaster_user_id: "channel-id", user_id: "reader-id" },
     transport: { method: "websocket", session_id: "session-id" },
   });
+});
+
+test("stream status reads use the existing token, distinguish offline from invalid data and do not need extra scopes", async () => {
+  const responses = [
+    { user_id: "999", login: "bot", client_id: "client", scopes: ["chat:read", "chat:edit"] },
+    { data: [] },
+    { data: [{ id: "live-id", user_login: "channel", type: "live", started_at: "2026-10-22T10:00:00Z" }] },
+    { data: [{ id: "live-id", user_login: "other", type: "live", started_at: "2026-10-22T10:00:00Z" }] },
+    { data: null },
+  ];
+  const handleFetch = async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    expect(new Headers(init?.headers).get("Authorization")).toMatch(/(?:OAuth|Bearer) fake-token/);
+    if (!String(url).includes("oauth2/validate")) expect(String(url)).toBe("https://api.twitch.tv/helix/streams?user_login=channel&type=live&first=1");
+    return Response.json(responses.shift());
+  };
+  spyOn(globalThis, "fetch").mockImplementation(Object.assign(handleFetch, { preconnect: fetch.preconnect }));
+  const api = new TwitchApi("fake-token", new AbortController().signal);
+  await api.authenticate();
+  expect(await api.getLiveStream("channel")).toBeUndefined();
+  expect(await api.getLiveStream("channel")).toEqual({ id: "live-id", startedAt: "2026-10-22T10:00:00Z" });
+  await expect(api.getLiveStream("channel")).rejects.toThrow("некорректный статус");
+  await expect(api.getLiveStream("channel")).rejects.toThrow("некорректный статус");
+});
+
+test("a live send queued behind token acquisition is blocked if the stream goes offline before HTTP dispatch", async () => {
+  let release!: (value: { accessToken: string; clientId: string }) => void;
+  let delayed = false, live = true;
+  const credentials = { accessToken: "fake-token", clientId: "client" };
+  const handleFetch = async () => Response.json({ user_id: "999", login: "bot", client_id: "client", scopes: ["user:write:chat"] });
+  const calls = spyOn(globalThis, "fetch").mockImplementation(Object.assign(handleFetch, { preconnect: fetch.preconnect }));
+  const api = new TwitchApi("", new AbortController().signal, undefined, {
+    get: () => delayed ? new Promise((resolve) => { release = resolve; }) : Promise.resolve(credentials),
+    refresh: async () => credentials,
+  });
+  await api.authenticate(); delayed = true;
+  const result = api.sendMessage("channel", "999", "Привет", undefined, () => live).catch((error: unknown) => error);
+  live = false; release(credentials);
+  expect(await result).toMatchObject({ code: "STREAM_NOT_LIVE" });
+  expect(calls).toHaveBeenCalledTimes(1); // Validation only, no outbound chat request.
 });

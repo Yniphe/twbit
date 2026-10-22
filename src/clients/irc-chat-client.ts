@@ -1,5 +1,6 @@
 import { IrcParser } from "./irc-parser";
 import { validateOutgoingMessage } from "../chat-delivery";
+import { ChatDeliveryError, twitchChatRejection } from "../chat-send-error";
 import {
   WebSocketChatClient,
   type ClientCallbacks,
@@ -15,10 +16,10 @@ export class IrcChatClient extends WebSocketChatClient {
   async send(text: string, replyToMessageId?: string): Promise<{ messageId: string }> {
     validateOutgoingMessage(text, replyToMessageId);
     const socket = this.writer;
-    if (!socket || this.pending) throw new Error("Twitch IRC: отправка сейчас недоступна");
+    if (!socket || this.pending) throw new ChatDeliveryError("SEND_NOT_READY", "Отправка сейчас недоступна, чат не готов или ожидает подтверждение предыдущего сообщения");
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending?.reject(new Error("Twitch IRC: подтверждение отправки не получено; автоматического повтора нет"));
+        this.pending?.reject(new ChatDeliveryError("SEND_TIMEOUT", "Twitch не подтвердил отправку за 10 секунд, автоматического повтора нет"));
         socket.close();
       }, 10_000);
       this.pending = {
@@ -26,7 +27,7 @@ export class IrcChatClient extends WebSocketChatClient {
         reject: (error) => { clearTimeout(timer); this.pending = undefined; reject(error); },
       };
       try { socket.send(`${replyToMessageId ? `@reply-parent-msg-id=${replyToMessageId} ` : ""}PRIVMSG #${this.channel} :${text}\r\n`); }
-      catch { this.pending.reject(new Error("Twitch IRC: не удалось отправить сообщение")); }
+      catch { this.pending.reject(new ChatDeliveryError("SEND_CONNECTION_ERROR", "Не удалось передать сообщение в соединение Twitch")); }
     });
   }
   constructor(
@@ -46,7 +47,7 @@ export class IrcChatClient extends WebSocketChatClient {
       close: () => {
         if (this.writer === context.socket) {
           this.writer = undefined;
-          this.pending?.reject(new Error("Twitch IRC: соединение закрыто до подтверждения отправки"));
+          this.pending?.reject(new ChatDeliveryError("SEND_CONNECTION_CLOSED", "Соединение Twitch закрыто до подтверждения отправки, автоматического повтора нет"));
         }
       },
       open: () => {
@@ -92,7 +93,7 @@ export class IrcChatClient extends WebSocketChatClient {
               break;
             case "NOTICE":
               if (irc.params[0]?.toLowerCase() === `#${this.channel}` && irc.tags["msg-id"]?.startsWith("msg_")) {
-                this.pending?.reject(new Error(`Twitch IRC: сообщение отклонено (${irc.tags["msg-id"]})`));
+                this.pending?.reject(twitchChatRejection(irc.tags["msg-id"]));
               }
               if (/authentication failed|improperly formatted auth|invalid nick/i.test(irc.text)
                 || ["msg_banned", "msg_channel_suspended"].includes(irc.tags["msg-id"] ?? "")) {

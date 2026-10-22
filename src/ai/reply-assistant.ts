@@ -12,10 +12,15 @@ import { formatReplyMessage, stripRecipientAddress, type ChatSender } from "../c
 import type { TwitchUser } from "../twitch-api";
 import { BotDialogue } from "./bot-dialogue";
 import type { ReplyHistoryEntry, ReplyHistorySink } from "./reply-history";
+import { ChatDeliveryError, describeSendFailure } from "../chat-send-error";
 import { isChatCommand, isLowInformationMessage } from "./message-attention";
 import { rejectUngroundedReply } from "./reply-grounding";
 import { ReplyScheduler } from "./reply-scheduler";
 import { ChatReplyReviewer, type ReplyReviewer } from "./reply-reviewer";
+import { observe, type ServiceObserver } from "../runtime/events";
+import { ChatOutputPolicy, BLOCKED_WORD_REASON } from "../chat-output-policy";
+import { ReplyBanter } from "./reply-banter";
+import type { RelationshipSource } from "../people/relationships";
 
 /** Batches ambient conversation and prioritizes direct dialogue; validates before delivery. */
 export class ReplyAssistant {
@@ -28,6 +33,8 @@ export class ReplyAssistant {
   private readonly scheduler: ReplyScheduler;
   private analysisTask: Promise<void> = Promise.resolve();
   private readonly dialogue: BotDialogue;
+  private readonly outputPolicy: ChatOutputPolicy;
+  private readonly banter: ReplyBanter;
   private backoffUntil = 0;
   private readonly memoryTasks = new Set<Promise<void>>();
 
@@ -40,18 +47,24 @@ export class ReplyAssistant {
     private readonly sender?: ChatSender,
     private readonly history?: ReplyHistorySink,
     private readonly reviewer: ReplyReviewer = new ChatReplyReviewer(config, channel),
+    private readonly observer?: ServiceObserver,
+    private readonly relationships?: RelationshipSource,
   ) {
     this.buffer = new ConversationBuffer(config.context);
     this.dialogue = new BotDialogue(config.dialogue.windowSeconds);
     this.scheduler = new ReplyScheduler(config);
+    this.outputPolicy = new ChatOutputPolicy(config.blockedWords);
+    this.banter = new ReplyBanter(channel, config.banter, config.reply.maxAgeSeconds);
   }
 
   identify(account: Pick<TwitchUser, "userId" | "login">): void { this.dialogue.identify(account); }
 
   recordReply(draft: ReplyDraft): void {
     this.dialogue.sent(draft, Date.now());
+    this.banter.replied(draft);
     this.drafts.push(draft);
     if (this.drafts.length > 6) this.drafts.shift();
+    observe(this.observer, { type: "reply", draft });
   }
 
   start(): void {
@@ -117,6 +130,7 @@ export class ReplyAssistant {
     const { batch, priorityIds } = plan;
     const reasoningEffort = plan.trigger === "stream" ? this.config.stream.reasoningEffort : this.config.reasoningEffort;
     this.analyzing = true;
+    observe(this.observer, { type: "phase", phase: "thinking" });
     this.scheduler.started(plan, now);
     // Mark only this snapshot: events arriving while the request is in flight remain pending.
     this.buffer.acknowledge(batch);
@@ -124,7 +138,11 @@ export class ReplyAssistant {
     try {
       const memory = await this.memory?.recall(batch);
       if (!this.active) return;
-      const prompts = buildReplyPrompt(this.config, this.channel, batch, this.drafts, memory, this.dialogue.identity, priorityIds);
+      let banterTarget = priorityIds.length ? undefined : this.banter.select(batch, Date.now());
+      const style = banterTarget && this.relationships?.get(this.channel, banterTarget.login)?.style;
+      if (style && style !== "banter") banterTarget = undefined;
+      const relationships = this.relationships?.context(this.channel, batch) ?? [];
+      const prompts = buildReplyPrompt(this.config, this.channel, batch, this.drafts, memory, this.dialogue.identity, priorityIds, banterTarget, relationships);
       history = { id: crypto.randomUUID(), channel: this.channel, model: this.config.model,
         startedAt: new Date(), finishedAt: new Date(), trigger: plan.trigger, delivery: this.config.delivery,
         outcome: "analysis_error", outcomeReason: "Анализ не завершён", errorCode: null,
@@ -169,6 +187,7 @@ export class ReplyAssistant {
       if (!this.active) { history.outcome = "cancelled"; history.outcomeReason = "Приложение остановлено"; return; }
       let rejection = this.rejectReason(result.decision, batch, priorityIds);
       if (!rejection && this.config.review.enabled) {
+        observe(this.observer, { type: "phase", phase: "reviewing" });
         const requestId = crypto.randomUUID();
         const reviewStarted = performance.now();
         try {
@@ -196,6 +215,7 @@ export class ReplyAssistant {
       if (rejection) {
         history.outcome = result.decision.action === "skip" ? "skipped" : "rejected";
         history.outcomeReason = rejection;
+        if (rejection === BLOCKED_WORD_REASON) history.errorCode = "BLOCKED_WORD";
         this.logger.info({ event: "ai.skip", reason: rejection,
           analysisId: history.id,
           accepted: false, decision: result.decision,
@@ -205,22 +225,33 @@ export class ReplyAssistant {
       const decision = result.decision;
       const source = batch.events.find((event) => event.id === decision.replyToEventId && event.source === "chat");
       const replyTo = decision.target?.kind === "chat" ? undefined : source?.messageId;
-      const text = formatReplyMessage(decision.text, decision.target?.login, replyTo);
+      let text: string;
+      try {
+        text = formatReplyMessage(decision.text, decision.target?.login, replyTo);
+        this.outputPolicy.assert(text);
+      } catch (error) {
+        if (!(error instanceof ChatDeliveryError) || error.code !== "BLOCKED_WORD") throw error;
+        history.outcome = "rejected"; history.outcomeReason = BLOCKED_WORD_REASON; history.errorCode = "BLOCKED_WORD";
+        this.logger.info({ event: "ai.skip", reason: BLOCKED_WORD_REASON, analysisId: history.id }, "Ответ пропущен");
+        return;
+      }
       const draft: ReplyDraft = { at: new Date().toISOString(), text,
         action: decision.action, target: decision.target, delivery: this.config.delivery };
+      observe(this.observer, { type: "phase", phase: "responding" });
       if (this.config.delivery === "chat") {
         history.outgoingText = text;
         history.replyParentMessageId = replyTo ?? null;
         try {
-          if (!this.sender) throw new Error("Не настроен отправитель Twitch");
+          if (!this.sender) throw new ChatDeliveryError("SEND_NOT_CONFIGURED", "Не настроен отправитель Twitch");
           const sent = await this.sender.send(text, replyTo);
           draft.messageId = sent.messageId;
           draft.at = new Date().toISOString();
           history.outcome = "sent"; history.outcomeReason = "Twitch подтвердил отправку"; history.messageId = sent.messageId;
         } catch (error) {
           history.outcome = this.shutdown.signal.aborted ? "cancelled" : "send_failed";
-          history.outcomeReason = "Подтверждение отправки не получено; автоматического повтора нет";
-          history.errorCode = "SEND_UNCONFIRMED";
+          const failure = describeSendFailure(error);
+          history.outcomeReason = this.shutdown.signal.aborted ? "Приложение остановлено во время отправки, доставка не подтверждена" : failure.reason;
+          history.errorCode = this.shutdown.signal.aborted ? "ABORTED" : failure.code;
           this.logger.warn({ err: error, event: "ai.send_failed", delivery: "chat", accepted: false, analysisId: history.id },
             "Ответ не подтверждён Twitch; автоматического повтора нет");
           return;
@@ -257,9 +288,12 @@ export class ReplyAssistant {
       this.analyzing = false;
       if (history) {
         history.finishedAt = new Date();
+        observe(this.observer, { type: "result", outcome: history.outcome,
+          reason: history.outcomeReason, durationMs: history.finishedAt.getTime() - history.startedAt.getTime() });
         try { this.history?.recordReply(history); }
         catch { this.logger.error({ event: "database.history_lost", analysisId: history.id }, "Не удалось поставить историю ответа в очередь"); }
       }
+      observe(this.observer, { type: "phase", phase: "listening" });
     }
   }
 
@@ -270,19 +304,28 @@ export class ReplyAssistant {
     }
     if (decision.confidence < this.config.reply.minConfidence) return "Недостаточная уверенность в уместности ответа";
     if (!decision.text || Array.from(decision.text).length > this.config.reply.maxCharacters) return "Ответ пустой или слишком длинный";
+    if (this.outputPolicy.find(decision.text)) return BLOCKED_WORD_REASON;
     if (decision.text.trim().split(/\s+/u).length > this.config.reply.maxWords) return "Слишком много слов в ответе";
     const availableIds = new Set(batch.events.map((event) => event.id));
     if (!decision.eventIds.length || decision.eventIds.some((id) => !availableIds.has(id))) return "Ответ ссылается на неизвестные события";
     const freshEvidence = batch.events.filter((event) => decision.eventIds.includes(event.id) && batch.newEventIds.includes(event.id));
     if (!freshEvidence.length) return "Нет опоры на новые события";
-    const audioEvidence = batch.events.filter((event) => event.source === "stream_audio" && decision.eventIds.includes(event.id));
-    if (audioEvidence.some((event) => Date.now() - event.receivedAt > this.config.stream.maxAgeSeconds * 1000)) {
+    // Earlier speech can explain a fresh turn without becoming its response deadline.
+    // An explicit reply to old audio still expires even when fresh chat is present.
+    const anchor = decision.action === "reply" ? batch.events.find((event) => event.id === decision.replyToEventId)
+      : freshEvidence.reduce((latest, event) => event.receivedAt > latest.receivedAt ? event : latest);
+    if (anchor?.source === "stream_audio" && Date.now() - anchor.receivedAt > this.config.stream.maxAgeSeconds * 1000) {
       return "Реакция на эфир устарела";
     }
     if (Date.now() - Math.max(...freshEvidence.map((event) => event.receivedAt)) > this.config.reply.maxAgeSeconds * 1000) {
       return "Ответ устарел во время анализа";
     }
     const target = decision.target!;
+    const source = batch.events.find((event) => event.id === decision.replyToEventId);
+    if (this.relationships?.get(this.channel, target.login ?? "", source?.userId)?.style === "ignore"
+      || (source?.source === "chat" && this.relationships?.get(this.channel, source.author, source.userId)?.style === "ignore")) {
+      return "Для этого зрителя отключены ответы агента";
+    }
     if (target.kind === "streamer" && target.login?.toLowerCase() !== this.channel) return "Неверный login стримера";
     if (target.kind === "viewer" && !batch.events.some((event) => event.source === "chat"
       && event.speaker === "viewer" && event.author.toLowerCase() === target.login?.toLowerCase())) return "Адресат отсутствует в контексте чата";

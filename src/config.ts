@@ -23,17 +23,19 @@ export interface AppConfig {
   durationSeconds?: number;
 }
 
-export function loadConfig(path: URL, args = process.argv.slice(2)): AppConfig {
+export interface ConfigOptions { allowMissingToken?: boolean }
+
+export function loadConfig(path: URL, args = process.argv.slice(2), options: ConfigOptions = {}): AppConfig {
   let data: unknown;
   try {
     data = JSON.parse(readFileSync(path, "utf8"));
   } catch {
     throw new Error("Не удалось прочитать config.json. Создайте его по образцу config.example.json.");
   }
-  return parseConfig(data, args);
+  return parseConfig(data, args, options);
 }
 
-export function parseConfig(data: unknown, args: string[] = []): AppConfig {
+export function parseConfig(data: unknown, args: string[] = [], options: ConfigOptions = {}): AppConfig {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw new Error("config.json должен содержать объект настроек");
   }
@@ -73,7 +75,7 @@ export function parseConfig(data: unknown, args: string[] = []): AppConfig {
     throw new Error("--duration должен содержать положительное число секунд");
   }
   const accessToken = readString("accessToken")?.replace(/^oauth:/, "").trim() ?? "";
-  if (!accessToken && !speechOnly) throw new Error("В config.json не указан accessToken");
+  if (!accessToken && !speechOnly && !options.allowMissingToken) throw new Error("В config.json не указан accessToken");
   const speech = parseSpeechConfig(raw.speech);
   if (chatOnly) speech.enabled = false;
   if (speechOnly) speech.enabled = true;

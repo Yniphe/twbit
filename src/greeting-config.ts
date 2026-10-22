@@ -26,7 +26,7 @@ export function parseGreetingConfig(value: unknown): GreetingConfig {
       throw new Error("greeting.messages: каждое приветствие должно быть строкой до 160 символов");
     }
     try { validateOutgoingMessage(message); }
-    catch { throw new Error("greeting.messages: пустое сообщение, команда или управляющие символы"); }
+    catch { throw new Error("greeting.messages: недопустимый текст приветствия"); }
     return message.trim();
   }) };
 }

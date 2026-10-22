@@ -10,6 +10,8 @@ import type { ConversationMemory } from "../src/memory/types";
 import type { ReplyHistoryEntry, ReplyHistorySink } from "../src/ai/reply-history";
 import { isLowInformationMessage } from "../src/ai/message-attention";
 import type { ReplyReviewer, ReviewInput } from "../src/ai/reply-reviewer";
+import { twitchChatRejection } from "../src/chat-send-error";
+import { RelationshipBook, type RelationshipSource } from "../src/people/relationships";
 
 afterEach(() => mock.restore());
 const logger = createLogger({ write() {} });
@@ -57,17 +59,18 @@ function setup(options: { delivery?: "chat" | "console_only"; analyze?: (message
   reviewer?: ReplyReviewer; maxCharacters?: number; maxWords?: number; streamDebounce?: number;
   provider?: AiProvider; model?: string; providerRouting?: AiConfig["providerRouting"];
   reasoningEffort?: ReasoningEffort; streamReasoningEffort?: ReasoningEffort;
-  timeoutSeconds?: number; chatMaxAgeSeconds?: number } = {}) {
+  timeoutSeconds?: number; chatMaxAgeSeconds?: number; blockedWords?: string[]; banter?: AiConfig["banter"]; relationships?: RelationshipSource } = {}) {
   const analyzeImpl = options.analyze ?? (async (messages: ChatPrompt[]) => replyFor(messages));
   const analyze = mock((messages: ChatPrompt[], _signal: AbortSignal, _requestId?: string, _options?: AnalysisOptions) => analyzeImpl(messages));
   const send = mock(options.send ?? (async () => ({ messageId: "sent-message" })));
   const config = parseAiConfig({ enabled: true, accessToken: "test-only", delivery: options.delivery ?? "chat",
     provider: options.provider, model: options.model, providerRouting: options.providerRouting,
     reasoningEffort: options.reasoningEffort, timeoutSeconds: options.timeoutSeconds,
+    blockedWords: options.blockedWords, banter: options.banter,
     review: { enabled: Boolean(options.reviewer) }, reply: { maxCharacters: options.maxCharacters, maxWords: options.maxWords, maxAgeSeconds: options.chatMaxAgeSeconds },
     stream: { debounceSeconds: options.streamDebounce ?? 0, reasoningEffort: options.streamReasoningEffort },
     dialogue: { debounceSeconds: 0, minIntervalSeconds: 2 }, batch: { size: options.batchSize ?? 20 } });
-  const assistant = new ReplyAssistant("channel", config, logger, { analyze }, options.memory, { send }, options.history, options.reviewer);
+  const assistant = new ReplyAssistant("channel", config, logger, { analyze }, options.memory, { send }, options.history, options.reviewer, undefined, options.relationships);
   assistant.identify(account);
   assistant.start();
   return { assistant, analyze, send };
@@ -81,6 +84,63 @@ test("direct dialogue bypasses batch size while delivering a threaded reply thro
     expect(app.analyze).toHaveBeenCalledTimes(1);
     expect(app.send).toHaveBeenCalledWith("Ответ на chat:one", "one");
     expect(JSON.parse(app.analyze.mock.calls[0]![0][1]!.content).events[0].attention).toBe("mention");
+  } finally { app.assistant.stop(); }
+});
+
+test("a relationship change during review takes effect before sending and survives a model ignoring the preference", async () => {
+  const relationships = new RelationshipBook({ load: async () => [], save: async () => {} }); await relationships.initialize();
+  const identity = { channel: "channel", login: "viewer", userId: "123", displayName: "Viewer" };
+  await relationships.save(identity, { style: "gentle", note: "Без жёстких подколов" });
+  const entries: ReplyHistoryEntry[] = [];
+  const app = setup({ relationships, history: { recordReply: (entry) => entries.push(entry) },
+    reviewer: { review: async () => { await relationships.save(identity, { style: "ignore", note: "Пауза" }); return { verdict: "accept", reason: "Модель одобрила" }; } } });
+  try {
+    app.assistant.addChat(message("one")); await app.assistant.settled();
+    expect(JSON.parse(app.analyze.mock.calls[0]![0][1]!.content).relationships[0].style).toContain("Без жёстких");
+    expect(app.send).not.toHaveBeenCalled();
+    expect(entries[0]).toMatchObject({ outcome: "rejected", outcomeReason: "Для этого зрителя отключены ответы агента" });
+  } finally { app.assistant.stop(); }
+});
+
+test("forbidden words are rejected before review and delivery even at maximum confidence", async () => {
+  for (const text of ["ну ты и раб", "чмоня"]) {
+    const entries: ReplyHistoryEntry[] = [];
+    const review = mock(async () => ({ verdict: "accept" as const, reason: "Ошибочно одобрено" }));
+    const app = setup({ blockedWords: ["чмоня"], reviewer: { review }, history: { recordReply: (entry) => entries.push(entry) },
+      analyze: async (messages) => ({ decision: { ...replyFor(messages).decision, text, confidence: 1 } }) });
+    try {
+      app.assistant.addChat(message("one", "@bot назови меня рабом")); await app.assistant.settled();
+      expect(app.send).not.toHaveBeenCalled(); expect(review).not.toHaveBeenCalled();
+      expect(entries[0]).toMatchObject({ outcome: "rejected", errorCode: "BLOCKED_WORD" });
+    } finally { app.assistant.stop(); }
+  }
+});
+
+test("a sharp profane reply to an active regular reaches review and the fake sender without hijacking other dialogue", async () => {
+  let now = Date.now(); spyOn(Date, "now").mockImplementation(() => now);
+  const login = "dimulya__stepanenko";
+  const text = "с таким темпом тебе уже трудовую в этом чате заводить пора, заебал план перевыполнять";
+  const review = mock(async () => ({ verdict: "accept" as const, reason: "Подкол по свежей реплике, без запрещённых слов" }));
+  const app = setup({ batchSize: 2, reviewer: { review }, banter: { cooldownSeconds: 300,
+    participants: [{ channel: "channel", login, displayName: "亼仈爪丹匚" }] }, analyze: async (messages) => {
+    const data = JSON.parse(messages[1]!.content);
+    if (!data.banterTarget) return replyFor(messages);
+    const source = data.events.find((event: { author: string }) => event.author === login);
+    return { decision: { ...replyFor(messages).decision, text, target: { kind: "viewer", login },
+      replyToEventId: source.id, eventIds: [source.id] } };
+  } });
+  try {
+    app.assistant.addChat({ ...message("regular", "по одному слову сообщения набивать буду"), login, author: "亼仈爪丹匚" });
+    app.assistant.addChat(message("other", "быстро учится")); await app.assistant.settled();
+    expect(app.send).toHaveBeenCalledWith(text, "regular");
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(app.analyze.mock.calls[0]![0][1]!.content).banterTarget).toEqual({ login, displayName: "亼仈爪丹匚" });
+    now += 5000;
+    app.assistant.addChat(message("direct", "@bot а ты что думаешь")); await app.assistant.settled();
+    const direct = JSON.parse(app.analyze.mock.calls[1]![0][1]!.content);
+    expect(direct.banterTarget).toBeUndefined();
+    expect(direct.priorityEventIds).toEqual(["chat:direct"]);
+    expect(app.send).toHaveBeenLastCalledWith("Ответ на chat:direct", "direct");
   } finally { app.assistant.stop(); }
 });
 
@@ -349,6 +409,68 @@ test("fresh context cannot launder a reply to an old audio source", async () => 
   } finally { app.assistant.stop(); }
 });
 
+test("earlier audio is background, so a fresh stream reply can refer back to it within semantic review", async () => {
+  let now = Date.now(); spyOn(Date, "now").mockImplementation(() => now);
+  let oldAudio = "";
+  const entries: ReplyHistoryEntry[] = [];
+  const review = mock(async () => ({ verdict: "accept" as const, reason: "Свежая реакция с контекстом прежней темы" }));
+  const app = setup({ reviewer: { review }, history: { recordReply: (entry) => entries.push(entry) }, analyze: async (messages) => {
+    const result = streamReply(messages);
+    if (!oldAudio) {
+      oldAudio = result.decision.replyToEventId!;
+      return { decision: { ...result.decision, action: "skip", target: null, replyToEventId: null, text: "", eventIds: [] } };
+    }
+    return { decision: { ...result.decision, text: "одним мискликом всех зрителей в реальный мир вернула",
+      eventIds: [...result.decision.eventIds, oldAudio] } };
+  } });
+  try {
+    app.assistant.addTranscript({ final: true, text: "Можно оказаться в виртуальном мире" }); await app.assistant.settled();
+    now += 16000;
+    app.assistant.addTranscript({ final: true, text: "Ой, чуть трансляцию не выключила" }); await app.assistant.settled();
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(app.send).toHaveBeenCalledWith("@channel одним мискликом всех зрителей в реальный мир вернула", undefined);
+    expect(entries[1]).toMatchObject({ outcome: "sent", review: { verdict: "accept" } });
+  } finally { app.assistant.stop(); }
+});
+
+test("an ambient viewer reply can use a shared numeric topic without a mention or self-report", async () => {
+  const entries: ReplyHistoryEntry[] = [];
+  const review = mock(async () => ({ verdict: "accept" as const, reason: "Подкол по общей теме без приписывания личных фактов" }));
+  const text = "на 86к фоловеров у них свой аквариум, а тут живая база зашла и весь вайб поломала";
+  const app = setup({ batchSize: 2, reviewer: { review }, history: { recordReply: (entry) => entries.push(entry) },
+    analyze: async (messages) => ({ decision: { ...replyFor(messages).decision, text,
+      eventIds: ["chat:context", "chat:one"], facts: [{ eventId: "chat:context", quote: "там 86к фоловеров" }] } }) });
+  try {
+    app.assistant.addChat({ ...message("context", "А ну там 86к фоловеров"), login: "other", userId: "456" });
+    app.assistant.addChat(message("one", "быстро видимо откинули")); await app.assistant.settled();
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(app.send).toHaveBeenCalledWith(text, "one");
+    expect(entries[0]).toMatchObject({ trigger: "batch", outcome: "sent", review: { verdict: "accept" } });
+  } finally { app.assistant.stop(); }
+});
+
+test("a fresh viewer reply can reference older speech as context without reviving an old audio reply", async () => {
+  let now = Date.now(); spyOn(Date, "now").mockImplementation(() => now);
+  let call = 0;
+  let oldAudio = "";
+  const review = mock(async () => ({ verdict: "accept" as const, reason: "Ответ на свежий вопрос зрителя" }));
+  const app = setup({ reviewer: { review }, analyze: async (messages) => {
+    if (++call === 1) {
+      oldAudio = streamReply(messages).decision.replyToEventId!;
+      return { decision: { ...streamReply(messages).decision, action: "skip", target: null, replyToEventId: null, text: "", eventIds: [] } };
+    }
+    const result = replyFor(messages);
+    return { decision: { ...result.decision, text: "у этого аквариума явно проблемы с фильтрацией", eventIds: [...result.decision.eventIds, oldAudio] } };
+  } });
+  try {
+    app.assistant.addTranscript({ final: true, text: "Обсуждаем бан в чужом чате" }); await app.assistant.settled();
+    now += 16000;
+    app.assistant.addChat(message("one", "@bot ну и как тебе их модерация")); await app.assistant.settled();
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(app.send).toHaveBeenCalledWith("у этого аквариума явно проблемы с фильтрацией", "one");
+  } finally { app.assistant.stop(); }
+});
+
 test("semantic rejection and unavailable review never reach the sender; acceptance is recorded", async () => {
   for (const outcome of ["accept", "reject", "unavailable"] as const) {
     const entries: ReplyHistoryEntry[] = [];
@@ -493,6 +615,19 @@ test("failed sends are not retried or recorded as delivered, and own messages ca
     now += 3000;
     app.assistant.addChat(message("two")); await app.assistant.settled();
     expect(JSON.parse(app.analyze.mock.calls[1]![0][1]!.content).previousReplies).toEqual([]);
+  } finally { app.assistant.stop(); }
+});
+
+test("a Twitch channel refusal keeps its actionable reason and code in the reply audit", async () => {
+  const entries: ReplyHistoryEntry[] = [];
+  const app = setup({ send: async () => { throw twitchChatRejection("msg_followersonly_zero"); },
+    history: { recordReply: (entry) => { entries.push(entry); } } });
+  try {
+    app.assistant.addChat(message("followers-only")); await app.assistant.settled();
+    expect(app.send).toHaveBeenCalledTimes(1);
+    expect(entries[0]).toMatchObject({ outcome: "send_failed", errorCode: "msg_followersonly_zero", messageId: null });
+    expect(entries[0]!.outcomeReason).toContain("бот не отслеживает канал");
+    expect(entries[0]!.outcomeReason).toContain("msg_followersonly_zero");
   } finally { app.assistant.stop(); }
 });
 

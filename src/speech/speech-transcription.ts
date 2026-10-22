@@ -15,6 +15,7 @@ export class SpeechTranscription {
     private readonly config: SpeechConfig,
     private readonly logger: Logger,
     private readonly onTranscript: (transcript: Transcript) => void,
+    private readonly onConnection: (connected: boolean) => void = () => {},
   ) {}
 
   async run(check = false): Promise<void> {
@@ -30,13 +31,16 @@ export class SpeechTranscription {
         try {
           const playlist = await playback.resolve(this.channel, this.shutdown.signal);
           this.logger.info({ audioOnly: playlist.audioOnly }, "Аудиопоток подключён");
+          this.onConnection(true);
           for await (const samples of audio.read(playlist.url, this.shutdown.signal)) {
             // Awaiting each frame provides backpressure; audio cannot build an unbounded worker queue.
             this.emit(await this.worker.accept(samples));
           }
           this.emit(await this.worker.finish());
+          this.onConnection(false);
         } catch (error) {
           if (this.shutdown.signal.aborted) break;
+          this.onConnection(false);
           this.logger.warn({ err: error }, "Аудиопоток недоступен; повтор подключения через 15 секунд");
           await this.worker.reset();
         }
@@ -48,6 +52,7 @@ export class SpeechTranscription {
     } catch (error) {
       if (!this.shutdown.signal.aborted) throw error;
     } finally {
+      this.onConnection(false);
       this.worker.stop();
     }
   }
